@@ -24,6 +24,9 @@ public:
   void Stop();
   void Join();
   void SetSleepTimer(uint32_t timer);
+
+private:
+  std::mutex mMtx;
 };
 
 Thread::Thread() : mSleepTimer(1000)
@@ -49,11 +52,13 @@ void Thread::Start()
 
 void Thread::Stop()
 {
-  if (!shouldStop())
-  {
-    mStop.set_value();
-    mStopCondition.notify_one();
-  }
+  if (shouldStop())
+    return;
+
+  mStop.set_value();
+
+  std::lock_guard<std::mutex> lck(mMtx);
+  mStopCondition.notify_one();
 }
 
 void Thread::Join()
@@ -74,8 +79,7 @@ bool Thread::shouldStop()
 
 void Thread::run()
 {
-  std::mutex mtx;
-  std::unique_lock<std::mutex> lck(mtx);
+  std::unique_lock<std::mutex> lck(mMtx);
 
   while (!shouldStop())
   {
