@@ -9,11 +9,10 @@ class Thread
 protected:
   int mSleepTimer;
   std::unique_ptr< std::thread > mThread;
-  std::condition_variable mStopCondition;
   std::promise< void > mStop;
   std::future< void > mStopObj;
   void run();
-  bool shouldStop();
+  bool hasStopped();
   virtual void work() = 0;
 
 public:
@@ -26,7 +25,8 @@ public:
   void SetSleepTimer(uint32_t timer);
 
 private:
-  std::mutex mMtx;
+  std::condition_variable mStopCondition;
+  std::mutex mStopMtx;
 };
 
 Thread::Thread() : mSleepTimer(1000)
@@ -52,26 +52,24 @@ void Thread::Start()
 
 void Thread::Stop()
 {
-  if (shouldStop())
+  if (hasStopped())
     return;
 
   mStop.set_value();
 
-  std::lock_guard<std::mutex> lck(mMtx);
+  std::lock_guard<std::mutex> lck(mStopMtx);
   mStopCondition.notify_one();
 }
 
 void Thread::Join()
 {
-  Stop();
-
   if (mThread->joinable())
   {
     mThread->join();
   }
 }
 
-bool Thread::shouldStop()
+bool Thread::hasStopped()
 {
   auto stopStatus = mStopObj.wait_for(std::chrono::milliseconds(1));
   return stopStatus != std::future_status::timeout;
@@ -79,19 +77,12 @@ bool Thread::shouldStop()
 
 void Thread::run()
 {
-  std::unique_lock<std::mutex> lck(mMtx);
+  std::unique_lock<std::mutex> lck(mStopMtx);
 
-  while (!shouldStop())
+  while (!hasStopped())
   {
     work();
-
-    auto stopCond = mStopCondition.wait_for(
-      lck, std::chrono::milliseconds(mSleepTimer));
-
-    if (stopCond != std::cv_status::timeout)
-    {
-      break;
-    }
+    mStopCondition.wait_for(lck, std::chrono::milliseconds(mSleepTimer));
   }
 
   std::cout << "The thread has stopped..." << std::endl;
