@@ -7,7 +7,9 @@
 class Thread
 {
 protected:
+  int mSleepTimer;
   std::unique_ptr< std::thread > mThread;
+  std::condition_variable mStopCondition;
   std::promise< void > mStop;
   std::future< void > mStopObj;
   void run();
@@ -21,9 +23,10 @@ public:
   void Start();
   void Stop();
   void Join();
+  void SetSleepTimer(uint32_t timer);
 };
 
-Thread::Thread()
+Thread::Thread() : mSleepTimer(1000)
 {
   mStopObj = mStop.get_future();
 }
@@ -31,6 +34,11 @@ Thread::Thread()
 Thread::~Thread()
 {
   Join();
+}
+
+void Thread::SetSleepTimer(uint32_t timer)
+{
+  mSleepTimer = timer;
 }
 
 void Thread::Start()
@@ -44,6 +52,7 @@ void Thread::Stop()
   if (!shouldStop())
   {
     mStop.set_value();
+    mStopCondition.notify_one();
   }
 }
 
@@ -65,11 +74,22 @@ bool Thread::shouldStop()
 
 void Thread::run()
 {
+  std::mutex mtx;
+  std::unique_lock<std::mutex> lck(mtx);
+
   while (!shouldStop())
   {
     work();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    auto stopCond = mStopCondition.wait_for(
+      lck, std::chrono::milliseconds(mSleepTimer));
+
+    if (stopCond != std::cv_status::timeout)
+    {
+      break;
+    }
   }
+
   std::cout << "The thread has stopped..." << std::endl;
 }
 
@@ -85,10 +105,16 @@ protected:
 int main(int argc, char *argv[])
 {
   std::unique_ptr< MyThread > pThread = std::make_unique< MyThread >();
+  pThread->SetSleepTimer(60000);
 
   pThread->Start();
 
-  std::this_thread::sleep_for(std::chrono::seconds(5));
+  for (int i = 0; i < 5; ++i) {
+    std::cout << "The main thread is working..." << std::endl;
+    std::cout << i << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(i));
+  }
+  pThread->Stop();
 
   return 0;
 }
